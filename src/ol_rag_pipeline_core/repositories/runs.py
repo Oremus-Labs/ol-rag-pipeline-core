@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 import psycopg
@@ -13,10 +13,10 @@ class ProcessingRun:
     run_id: UUID
     correlation_id: UUID
     pipeline_version: str
-    document_id: Optional[str]
+    document_id: str | None
     status: str
-    idempotency_key: Optional[str] = None
-    metrics_json: Optional[dict[str, Any]] = None
+    idempotency_key: str | None = None
+    metrics_json: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -25,11 +25,11 @@ class ProcessingError:
     run_id: UUID
     correlation_id: UUID
     pipeline_version: str
-    document_id: Optional[str]
+    document_id: str | None
     step: str
     message: str
-    error_code: Optional[str] = None
-    details_json: Optional[dict[str, Any]] = None
+    error_code: str | None = None
+    details_json: dict[str, Any] | None = None
 
 
 class RunRepository:
@@ -84,7 +84,11 @@ class RunRepository:
         )
         self._conn.commit()
 
-    def get_runs_for_document(self, document_id: str, pipeline_version: str) -> list[tuple[str, str]]:
+    def get_runs_for_document(
+        self,
+        document_id: str,
+        pipeline_version: str,
+    ) -> list[tuple[str, str]]:
         rows = self._conn.execute(
             """
             select run_id::text, status
@@ -107,4 +111,3 @@ class RunRepository:
             (run_id,),
         ).fetchall()
         return [r[0] for r in rows]
-

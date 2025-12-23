@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ class DocsDiscoveredEvent(BaseModel):
     content_fingerprint: str
     pipeline_version: str
     discovered_at: datetime
-    hints: Optional[dict[str, Any]] = None
+    hints: dict[str, Any] | None = None
 
 
 def prefect_idempotency_key(event: DocsDiscoveredEvent) -> str:

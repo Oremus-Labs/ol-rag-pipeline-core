@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator, Optional
 
 import psycopg
 from pydantic import SecretStr
@@ -10,12 +10,12 @@ from pydantic import SecretStr
 
 @dataclass(frozen=True)
 class PostgresConfig:
-    dsn: Optional[str] = None
-    host: Optional[str] = None
+    dsn: str | None = None
+    host: str | None = None
     port: int = 5432
-    db: Optional[str] = None
-    user: Optional[str] = None
-    password: Optional[SecretStr] = None
+    db: str | None = None
+    user: str | None = None
+    password: SecretStr | None = None
 
     def build_dsn(self) -> str:
         if self.dsn:

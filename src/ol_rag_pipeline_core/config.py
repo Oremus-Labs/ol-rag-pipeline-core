@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,7 +10,7 @@ class Settings(BaseSettings):
     pipeline_version: str = Field(alias="PIPELINE_VERSION")
     dataset_version: str = Field(alias="DATASET_VERSION")
 
-    pg_dsn: Optional[str] = Field(default=None, alias="PG_DSN")
+    pg_dsn: str | None = Field(default=None, alias="PG_DSN")
 
     qdrant_url: str = Field(alias="QDRANT_URL")
     qdrant_collection: str = Field(default="library_chunks_v1", alias="QDRANT_COLLECTION")

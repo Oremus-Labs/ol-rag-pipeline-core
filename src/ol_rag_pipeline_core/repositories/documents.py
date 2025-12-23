@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from typing import Optional
 
 import psycopg
 
@@ -50,11 +49,13 @@ class DocumentRepository:
         """
         payload = asdict(doc)
         categories_json = payload.get("categories_json")
-        payload["categories_json"] = json.dumps(categories_json) if categories_json is not None else None
+        payload["categories_json"] = (
+            json.dumps(categories_json) if categories_json is not None else None
+        )
         self._conn.execute(sql, payload)
         self._conn.commit()
 
-    def get_document(self, document_id: str) -> Optional[Document]:
+    def get_document(self, document_id: str) -> Document | None:
         row = self._conn.execute(
             """
             select
@@ -117,7 +118,10 @@ class DocumentRepository:
             select
               d.document_id,
               %s as preview_text,
-              to_tsvector('english', coalesce(d.title,'') || ' ' || coalesce(d.author,'') || ' ' || %s) as search_tsv,
+              to_tsvector(
+                'english',
+                coalesce(d.title,'') || ' ' || coalesce(d.author,'') || ' ' || %s
+              ) as search_tsv,
               now() as updated_at
             from documents d
             where d.document_id=%s
@@ -166,4 +170,3 @@ class DocumentRepository:
             (document_id,),
         ).fetchall()
         return [DocumentLink(document_id=r[0], link_type=r[1], url=r[2], label=r[3]) for r in rows]
-

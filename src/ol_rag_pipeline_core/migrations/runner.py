@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
 
 import psycopg
 
@@ -49,7 +49,7 @@ def apply_migrations(
     dsn: str,
     *,
     schema: str = "public",
-    migrations: Optional[Iterable[Migration]] = None,
+    migrations: Iterable[Migration] | None = None,
 ) -> list[str]:
     """
     Applies migrations into the given schema. Idempotent:

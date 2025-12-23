@@ -35,7 +35,7 @@ def test_documents_crud_categories_links_and_search(conn) -> None:  # noqa: ANN0
 
     docs.add_link(DocumentLink(document_id="doc-1", link_type="source_uri", url=doc.source_uri))
     docs.add_link(DocumentLink(document_id="doc-1", link_type="canonical_url", url="https://example/doc-1"))
-    assert [l.link_type for l in docs.list_links("doc-1")] == ["canonical_url", "source_uri"]
+    assert [link.link_type for link in docs.list_links("doc-1")] == ["canonical_url", "source_uri"]
 
     docs.upsert_search_preview("doc-1", "Augustine wrote about grace and conversion.")
     hits = docs.search_documents("conversion")
@@ -117,4 +117,3 @@ def test_processing_runs_and_errors(conn) -> None:  # noqa: ANN001
     got = runs.get_runs_for_document("doc-3", "v1")
     assert got[0][0] == str(run_id)
     assert runs.get_errors_for_run(str(run_id)) == ["boom"]
-

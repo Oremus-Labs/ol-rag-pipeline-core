@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import psycopg
 
@@ -11,7 +11,13 @@ class ChunkRepository:
     def __init__(self, conn: psycopg.Connection):
         self._conn = conn
 
-    def replace_chunks(self, *, document_id: str, pipeline_version: str, chunks: Iterable[Chunk]) -> None:
+    def replace_chunks(
+        self,
+        *,
+        document_id: str,
+        pipeline_version: str,
+        chunks: Iterable[Chunk],
+    ) -> None:
         """
         Replace-all semantics for a document+pipeline_version chunk set.
         """
@@ -50,4 +56,3 @@ class ChunkRepository:
                     ),
                 )
         self._conn.commit()
-

@@ -20,15 +20,10 @@ def pg_dsn() -> str:
 
 
 @pytest.fixture(scope="session")
-def pg_schema(pg_dsn: str) -> str:
+def pg_schema(pg_dsn: str) -> Generator[str, None, None]:
     schema = f"test_{uuid.uuid4().hex[:10]}"
     apply_migrations(pg_dsn, schema=schema)
-    return schema
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _drop_schema_at_end(pg_dsn: str, pg_schema: str) -> Generator[None, None, None]:
-    yield
+    yield schema
     with psycopg.connect(pg_dsn) as conn:
         conn.execute(f'drop schema if exists "{pg_schema}" cascade')
         conn.commit()
@@ -38,4 +33,3 @@ def _drop_schema_at_end(pg_dsn: str, pg_schema: str) -> Generator[None, None, No
 def conn(pg_dsn: str, pg_schema: str) -> Generator[psycopg.Connection, None, None]:
     with connect(pg_dsn, schema=pg_schema) as c:
         yield c
-
