@@ -14,7 +14,7 @@ class EmbeddingClient:
     max_batch_texts: int = 16
     max_batch_chars: int = 12_000
     timeout_s: float = 120.0
-    max_retries: int = 2
+    max_retries: int = 6
     retry_backoff_s: float = 1.0
 
     def _batch(self, texts: list[str]) -> list[list[str]]:
@@ -60,6 +60,7 @@ class EmbeddingClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         url = self.base_url.rstrip("/") + "/v1/embeddings"
+        retryable_status = {429, 500, 502, 503, 504}
 
         def _embed_batch(client: httpx.Client, batch: list[str]) -> list[list[float]]:
             attempt = 0
@@ -83,12 +84,18 @@ class EmbeddingClient:
                             ) from e
                         mid = len(batch) // 2
                         return _embed_batch(client, batch[:mid]) + _embed_batch(client, batch[mid:])
-                    raise
+                    if e.response is not None and e.response.status_code in retryable_status:
+                        if attempt >= self.max_retries:
+                            raise
+                    else:
+                        raise
                 except (httpx.TimeoutException, httpx.TransportError):
                     if attempt >= self.max_retries:
                         raise
-                    sleep(self.retry_backoff_s * (2**attempt))
-                    attempt += 1
+                # Retry path (HTTP retryable or transport/timeout)
+                delay = min(self.retry_backoff_s * (2**attempt), 10.0)
+                sleep(delay)
+                attempt += 1
 
         embeddings: list[list[float]] = []
         with httpx.Client(timeout=self.timeout_s) as client:
