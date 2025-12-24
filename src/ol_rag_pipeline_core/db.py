@@ -15,7 +15,7 @@ class PostgresConfig:
     port: int = 5432
     db: str | None = None
     user: str | None = None
-    password: SecretStr | None = None
+    password: SecretStr | str | None = None
 
     def build_dsn(self) -> str:
         if self.dsn:
@@ -31,8 +31,13 @@ class PostgresConfig:
             missing.append("POSTGRES_PASSWORD")
         if missing:
             raise ValueError(f"Missing Postgres config: {', '.join(missing)} (or set PG_DSN)")
+        password = (
+            self.password.get_secret_value()
+            if isinstance(self.password, SecretStr)
+            else self.password
+        )
         return (
-            f"postgresql://{self.user}:{self.password.get_secret_value()}"
+            f"postgresql://{self.user}:{password}"
             f"@{self.host}:{self.port}/{self.db}"
         )
 
@@ -42,4 +47,3 @@ def connect(dsn: str, *, schema: str = "public") -> Iterator[psycopg.Connection]
     options = f"-c search_path={schema} -c timezone=UTC"
     with psycopg.connect(dsn, options=options) as conn:
         yield conn
-
