@@ -6,6 +6,18 @@ import boto3
 from botocore.config import Config
 
 
+def parse_s3_uri(uri: str) -> tuple[str, str]:
+    if not uri.startswith("s3://"):
+        raise ValueError(f"Not an s3:// URI: {uri}")
+    rest = uri.removeprefix("s3://")
+    if "/" not in rest:
+        raise ValueError(f"Invalid s3:// URI (missing key): {uri}")
+    bucket, key = rest.split("/", 1)
+    if not bucket or not key:
+        raise ValueError(f"Invalid s3:// URI: {uri}")
+    return bucket, key
+
+
 @dataclass(frozen=True)
 class S3Config:
     endpoint: str
@@ -42,6 +54,12 @@ class S3Client:
         obj = self._client.get_object(Bucket=self._cfg.bucket, Key=key)
         return obj["Body"].read()
 
+    def get_bytes_uri(self, uri: str) -> bytes:
+        bucket, key = parse_s3_uri(uri)
+        if bucket != self._cfg.bucket:
+            raise ValueError(f"Bucket mismatch for URI: {uri}")
+        return self.get_bytes(key)
+
     def put_bytes(
         self,
         key: str,
@@ -54,4 +72,3 @@ class S3Client:
             extra["ContentType"] = content_type
         self._client.put_object(Bucket=self._cfg.bucket, Key=key, Body=data, **extra)
         return f"s3://{self._cfg.bucket}/{key}"
-

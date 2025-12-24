@@ -1,6 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import psycopg
+
+
+@dataclass(frozen=True)
+class DocumentFile:
+    document_id: str
+    variant: str
+    storage_uri: str
+    sha256: str | None
+    bytes_size: int | None
+    mime_type: str | None
 
 
 class DocumentFileRepository:
@@ -31,3 +43,22 @@ class DocumentFileRepository:
         )
         self._conn.commit()
 
+    def get_file(self, *, document_id: str, variant: str) -> DocumentFile | None:
+        row = self._conn.execute(
+            """
+            select document_id, variant, storage_uri, sha256, bytes, mime_type
+            from document_files
+            where document_id=%s and variant=%s
+            """,
+            (document_id, variant),
+        ).fetchone()
+        if not row:
+            return None
+        return DocumentFile(
+            document_id=row[0],
+            variant=row[1],
+            storage_uri=row[2],
+            sha256=row[3],
+            bytes_size=row[4],
+            mime_type=row[5],
+        )

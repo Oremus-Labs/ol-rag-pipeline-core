@@ -13,4 +13,3 @@ def test_settings_parses_required_fields() -> None:
         }
     )
     assert settings.pipeline_version == "v1"
-

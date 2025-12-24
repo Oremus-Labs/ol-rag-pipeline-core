@@ -170,3 +170,20 @@ class DocumentRepository:
             (document_id,),
         ).fetchall()
         return [DocumentLink(document_id=r[0], link_type=r[1], url=r[2], label=r[3]) for r in rows]
+
+    def set_processing_state(
+        self,
+        *,
+        document_id: str,
+        status: str,
+        is_scanned: bool | None,
+    ) -> None:
+        self._conn.execute(
+            """
+            update documents
+            set status=%s, is_scanned=%s, updated_at=now()
+            where document_id=%s
+            """,
+            (status, is_scanned, document_id),
+        )
+        self._conn.commit()
