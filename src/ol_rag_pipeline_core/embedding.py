@@ -50,19 +50,34 @@ class EmbeddingClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         url = self.base_url.rstrip("/") + "/v1/embeddings"
+
+        def _embed_batch(client: httpx.Client, batch: list[str]) -> list[list[float]]:
+            resp = client.post(
+                url,
+                headers=headers,
+                json={"model": self.model, "input": batch},
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if e.response is not None and e.response.status_code == 413:
+                    if len(batch) == 1:
+                        raise RuntimeError(
+                            "Embedding request too large (413) for a single chunk. "
+                            "Reduce CHUNK_MAX_TOKENS or decrease per-chunk size."
+                        ) from e
+                    mid = len(batch) // 2
+                    return _embed_batch(client, batch[:mid]) + _embed_batch(client, batch[mid:])
+                raise
+
+            payload = resp.json()
+            data = payload.get("data") or []
+            return [item["embedding"] for item in data]
+
         embeddings: list[list[float]] = []
         with httpx.Client(timeout=30) as client:
             for batch in self._batch(texts):
-                resp = client.post(
-                    url,
-                    headers=headers,
-                    json={"model": self.model, "input": batch},
-                )
-                resp.raise_for_status()
-                payload = resp.json()
-                data = payload.get("data") or []
-                for item in data:
-                    embeddings.append(item["embedding"])
+                embeddings.extend(_embed_batch(client, batch))
 
         if len(embeddings) != len(texts):
             raise RuntimeError(f"Embedding count mismatch: {len(embeddings)} != {len(texts)}")
