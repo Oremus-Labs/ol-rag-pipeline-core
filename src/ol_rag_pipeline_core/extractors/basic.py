@@ -135,15 +135,65 @@ _LANG_LINE_RE = re.compile(r"^(?:[A-Z]{2}\\s*(?:-|–|—)\\s*){1,10}[A-Z]{2}$")
 _LANG_CODE_RE = re.compile(r"^[A-Z]{2}$")
 _COMMON_LANG_CODES = {"AR", "DE", "EN", "ES", "FR", "IT", "LA", "PT", "ZH"}
 _PUNCT_ONLY_RE = re.compile(r"[^A-Za-z0-9]+")
+_VATICAN_LANG_NAMES = {
+    "italiano",
+    "français",
+    "english",
+    "português",
+    "español",
+    "deutsch",
+    "latine",
+    "العربيّة",
+    "中文",
+}
+_VATICAN_NAV_PHRASES = {
+    "la santa sede",
+    "the holy see",
+    "magisterium",
+    "calendario",
+    "celebrazioni liturgiche",
+    "biglietti udienze e celebrazioni pontificie",
+    "sommi pontefici",
+    "collegio cardinalizio",
+    "curia romana e altre organizzazioni",
+    "sinodo",
+    "sala stampa",
+    "vatican news - radio vaticana",
+    "l'osservatore romano",
+    "generazione pdf in corso.....",
+}
 
 
-def _strip_leading_boilerplate_lines(text: str, *, max_scan_lines: int = 30) -> str:
+def _looks_like_vatican_nav(head_lines: list[str]) -> bool:
+    """
+    Heuristic: Vatican pages often include a large language/menu block before the actual content.
+    We only enable the more aggressive stripping when this pattern is present.
+    """
+    hits = 0
+    for line in head_lines[:50]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        low = stripped.lower()
+        if "la santa sede" in low:
+            hits += 3
+        if low in _VATICAN_LANG_NAMES:
+            hits += 1
+        if low in _VATICAN_NAV_PHRASES:
+            hits += 1
+        if "vatican" in low and "news" in low:
+            hits += 1
+    return hits >= 5
+
+
+def _strip_leading_boilerplate_lines(text: str, *, max_scan_lines: int = 120) -> str:
     """
     Removes common nav/toolbar artifacts that sometimes survive HTML-to-text conversion.
 
     This is intentionally conservative and only considers the first N lines.
     """
     lines = text.splitlines()
+    vatican_mode = _looks_like_vatican_nav(lines)
     kept: list[str] = []
     scanned = 0
     for line in lines:
@@ -160,6 +210,14 @@ def _strip_leading_boilerplate_lines(text: str, *, max_scan_lines: int = 30) -> 
                 continue
             if _LANG_CODE_RE.match(stripped) and stripped in _COMMON_LANG_CODES:
                 continue
+            if vatican_mode:
+                low = stripped.lower().strip()
+                if low.startswith("× "):
+                    low = low.removeprefix("× ").strip()
+                if low in _VATICAN_LANG_NAMES:
+                    continue
+                if low in _VATICAN_NAV_PHRASES:
+                    continue
             codes = re.findall(r"[A-Z]{2}", stripped)
             if len(codes) == 1 and codes[0] in _COMMON_LANG_CODES:
                 remainder = stripped.replace(codes[0], "")
