@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     s3_endpoint: str = Field(alias="S3_ENDPOINT")
     s3_bucket: str = Field(alias="S3_BUCKET")
 
+    calibre_export_enabled: bool = Field(default=True, alias="CALIBRE_EXPORT_ENABLED")
+    calibre_s3_bucket: str = Field(default="calibre-inbox", alias="CALIBRE_S3_BUCKET")
+    calibre_s3_prefix: str = Field(default="etl", alias="CALIBRE_S3_PREFIX")
+
     nats_url: str = Field(alias="NATS_URL")
 
 
