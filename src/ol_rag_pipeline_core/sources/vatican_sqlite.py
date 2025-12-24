@@ -95,6 +95,8 @@ def discover_document_rows(sqlite_path: str, *, limit: int = 100) -> list[Vatica
                         continue
                     categories = _safe_json_loads(data.get("categories_json"))
                     raw = _safe_json_loads(data.get("raw_json"))
+                    if isinstance(categories, list):
+                        categories = [str(c).strip() for c in categories if c is not None and str(c).strip()]
                     out.append(
                         VaticanSqliteDocumentRow(
                             row_id=str(data.get("id")),
