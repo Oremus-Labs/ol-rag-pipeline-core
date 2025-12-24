@@ -1,5 +1,5 @@
 from ol_rag_pipeline_core.config import Settings, load_settings
-from ol_rag_pipeline_core.chunking import TextChunk, chunk_text
+from ol_rag_pipeline_core.chunking import TextChunk, chunk_pages, chunk_text
 from ol_rag_pipeline_core.embedding import EmbeddingClient
 from ol_rag_pipeline_core.extractors import ExtractResult, extract_text
 from ol_rag_pipeline_core.qdrant import QdrantClient, deterministic_point_id
@@ -13,6 +13,7 @@ __all__ = [
     "Settings",
     "QdrantClient",
     "TextChunk",
+    "chunk_pages",
     "chunk_text",
     "deterministic_point_id",
     "deterministic_ocr_run_id",

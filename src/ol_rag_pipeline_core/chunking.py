@@ -54,3 +54,32 @@ def chunk_text(
 
     return chunks
 
+
+def chunk_pages(
+    *,
+    pages: list[tuple[int, str]],
+    max_tokens: int = 500,
+    overlap_tokens: int = 50,
+) -> list[TextChunk]:
+    """
+    Page-aware chunking.
+
+    Each page is chunked independently and chunk metadata is tagged with:
+    - page_start=page_end=<page_number>
+    - locator="p.<page_number>"
+    """
+    chunks: list[TextChunk] = []
+    for page_number, text in pages:
+        page_chunks = chunk_text(text=text, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        for c in page_chunks:
+            chunks.append(
+                TextChunk(
+                    text=c.text,
+                    token_count=c.token_count,
+                    section_path=c.section_path,
+                    page_start=page_number,
+                    page_end=page_number,
+                    locator=f"p.{page_number}",
+                )
+            )
+    return chunks

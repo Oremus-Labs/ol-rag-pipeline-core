@@ -92,3 +92,58 @@ class QdrantClient:
             )
             resp.raise_for_status()
 
+    def search(
+        self,
+        *,
+        collection: str,
+        vector: list[float],
+        limit: int = 10,
+        query_filter: dict[str, Any] | None = None,
+        with_payload: bool = True,
+    ) -> list[dict[str, Any]]:
+        base = self.base_url.rstrip("/")
+        headers = self._headers()
+        body: dict[str, Any] = {
+            "vector": vector,
+            "limit": limit,
+            "with_payload": with_payload,
+        }
+        if query_filter is not None:
+            body["filter"] = query_filter
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(
+                f"{base}/collections/{collection}/points/search",
+                headers=headers,
+                json=body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            result = data.get("result")
+            if not isinstance(result, list):
+                raise RuntimeError("Unexpected Qdrant search response shape")
+            return result
+
+    def count(
+        self,
+        *,
+        collection: str,
+        query_filter: dict[str, Any] | None = None,
+    ) -> int:
+        base = self.base_url.rstrip("/")
+        headers = self._headers()
+        body: dict[str, Any] = {"exact": True}
+        if query_filter is not None:
+            body["filter"] = query_filter
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(
+                f"{base}/collections/{collection}/points/count",
+                headers=headers,
+                json=body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            result = data.get("result") or {}
+            cnt = result.get("count")
+            if not isinstance(cnt, int):
+                raise RuntimeError("Unexpected Qdrant count response shape")
+            return cnt
