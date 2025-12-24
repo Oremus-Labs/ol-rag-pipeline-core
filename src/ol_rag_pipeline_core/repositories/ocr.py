@@ -147,7 +147,9 @@ class OcrRepository:
         self._conn.execute(
             """
             update ocr_runs
-            set status=%s, metrics_json=%s::jsonb
+            set
+              status=%s,
+              metrics_json = coalesce(ocr_runs.metrics_json, '{}'::jsonb) || coalesce(%s::jsonb, '{}'::jsonb)
             where ocr_run_id=%s::uuid
             """,
             (status, json.dumps(metrics_json) if metrics_json is not None else None, str(ocr_run_id)),
