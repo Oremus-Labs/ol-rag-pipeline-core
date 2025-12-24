@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from html import escape as html_escape
 from io import BytesIO
 from typing import Iterable
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from ol_rag_pipeline_core.models import Document
 from ol_rag_pipeline_core.storage.s3 import S3Client
@@ -239,8 +239,9 @@ class CalibreExporter:
         authors = _authors_list(doc.author)
         tags = sorted({t for t in (inp.categories or []) if t and not t.startswith("_")})[:50]
 
+        stable_uuid = str(uuid5(NAMESPACE_URL, f"ol-etl:{inp.pipeline_version}:{doc.document_id}"))
         identifiers: dict[str, str] = {
-            "uuid": str(uuid4()),
+            "uuid": stable_uuid,
             "ol_document_id": doc.document_id,
         }
         if inp.source_uri:
@@ -318,4 +319,3 @@ class CalibreExporter:
             epub_uri=epub_uri,
             original_uri=original_uri,
         )
-
