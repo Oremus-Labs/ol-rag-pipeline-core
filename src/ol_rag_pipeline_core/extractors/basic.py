@@ -19,15 +19,102 @@ class _HTMLToText(HTMLParser):
         super().__init__(convert_charrefs=True)
         self._chunks: list[str] = []
         self._skip_depth = 0
+        self._skip_tag_stack: list[str] = []
+        self.meta_refresh_url: str | None = None
+
+    @staticmethod
+    def _attrs_dict(attrs) -> dict[str, str]:  # noqa: ANN001
+        out: dict[str, str] = {}
+        for k, v in attrs or []:
+            if isinstance(k, str) and isinstance(v, str):
+                out[k.lower()] = v
+        return out
+
+    @staticmethod
+    def _should_skip(tag: str, attrs: dict[str, str]) -> bool:
+        skip_tags = {
+            "script",
+            "style",
+            "nav",
+            "header",
+            "footer",
+            "aside",
+            "noscript",
+            "form",
+        }
+        if tag in skip_tags:
+            return True
+
+        role = (attrs.get("role") or "").lower()
+        if role in {"navigation", "banner", "contentinfo"}:
+            return True
+        return False
+
+    @staticmethod
+    def _is_meta_refresh(attrs: dict[str, str]) -> bool:
+        equiv = (attrs.get("http-equiv") or "").lower()
+        return equiv == "refresh"
+
+    @staticmethod
+    def _parse_meta_refresh_url(content: str) -> str | None:
+        # content is commonly: "0; url=./page.htm"
+        low = content.lower()
+        if "url=" not in low:
+            return None
+        _, rest = low.split("url=", 1)
+        url = rest.strip().strip("'\"")
+        return url or None
 
     def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
-        if tag in {"script", "style"}:
+        tag = tag.lower()
+        attrs_d = self._attrs_dict(attrs)
+
+        void_tags = {
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "meta",
+            "param",
+            "source",
+            "track",
+            "wbr",
+        }
+        if tag in void_tags:
+            if self._skip_depth == 0 and tag == "br":
+                self._chunks.append("\n")
+            if self._skip_depth == 0 and tag == "meta" and self._is_meta_refresh(attrs_d):
+                url = self._parse_meta_refresh_url(attrs_d.get("content", ""))
+                if url and self.meta_refresh_url is None:
+                    self.meta_refresh_url = url
+            return
+
+        should_skip = self._skip_depth > 0 or self._should_skip(tag, attrs_d)
+        if should_skip:
             self._skip_depth += 1
+            self._skip_tag_stack.append(tag)
+            return
+
+    def handle_startendtag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        # Normalize void tags which may be emitted as <tag/> by some sources.
+        self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style"} and self._skip_depth > 0:
-            self._skip_depth -= 1
-        if tag in {"p", "br", "div", "li", "tr", "h1", "h2", "h3", "h4"}:
+        if self._skip_depth > 0 and self._skip_tag_stack:
+            # Pop until we close the most recent skipped element.
+            tag = tag.lower()
+            while self._skip_tag_stack:
+                popped = self._skip_tag_stack.pop()
+                self._skip_depth -= 1
+                if popped == tag:
+                    break
+            return
+        if tag.lower() in {"p", "br", "div", "li", "tr", "h1", "h2", "h3", "h4"}:
             self._chunks.append("\n")
 
     def handle_data(self, data: str) -> None:
@@ -43,6 +130,51 @@ class _HTMLToText(HTMLParser):
 
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
 _NL_RE = re.compile(r"\n{3,}")
+_LEADING_A_RE = re.compile(r"^(?:A\\s+){1,}A$|^A$")
+_LANG_LINE_RE = re.compile(r"^(?:[A-Z]{2}\\s*(?:-|–|—)\\s*){1,10}[A-Z]{2}$")
+_LANG_CODE_RE = re.compile(r"^[A-Z]{2}$")
+_COMMON_LANG_CODES = {"AR", "DE", "EN", "ES", "FR", "IT", "LA", "PT", "ZH"}
+_PUNCT_ONLY_RE = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _strip_leading_boilerplate_lines(text: str, *, max_scan_lines: int = 30) -> str:
+    """
+    Removes common nav/toolbar artifacts that sometimes survive HTML-to-text conversion.
+
+    This is intentionally conservative and only considers the first N lines.
+    """
+    lines = text.splitlines()
+    kept: list[str] = []
+    scanned = 0
+    for line in lines:
+        scanned += 1
+        stripped = line.strip()
+        if scanned <= max_scan_lines:
+            if not stripped:
+                continue
+            if stripped in {"×"}:
+                continue
+            if _LEADING_A_RE.match(stripped):
+                continue
+            if _LANG_LINE_RE.match(stripped):
+                continue
+            if _LANG_CODE_RE.match(stripped) and stripped in _COMMON_LANG_CODES:
+                continue
+            codes = re.findall(r"[A-Z]{2}", stripped)
+            if len(codes) == 1 and codes[0] in _COMMON_LANG_CODES:
+                remainder = stripped.replace(codes[0], "")
+                remainder = _PUNCT_ONLY_RE.sub("", remainder)
+                if not remainder and len(stripped) <= 12:
+                    continue
+            if len(codes) >= 2 and all(c in _COMMON_LANG_CODES for c in codes):
+                remainder = stripped
+                for c in codes:
+                    remainder = remainder.replace(c, "")
+                remainder = _PUNCT_ONLY_RE.sub("", remainder)
+                if not remainder:
+                    continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def _normalize_text(text: str, *, max_chars: int = 2_000_000) -> str:
@@ -51,6 +183,7 @@ def _normalize_text(text: str, *, max_chars: int = 2_000_000) -> str:
     text = _WS_RE.sub(" ", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _NL_RE.sub("\n\n", text)
+    text = _strip_leading_boilerplate_lines(text)
     text = text.strip()
     if len(text) > max_chars:
         text = text[:max_chars]
@@ -61,10 +194,10 @@ def _decode_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _extract_html(data: bytes) -> str:
+def _extract_html(data: bytes) -> tuple[str, str | None]:
     parser = _HTMLToText()
     parser.feed(_decode_text(data))
-    return parser.text()
+    return parser.text(), parser.meta_refresh_url
 
 
 def _extract_pdf_text(data: bytes) -> str:
@@ -121,12 +254,13 @@ def extract_text(
         )
 
     if "html" in ct or name.endswith((".html", ".htm")):
-        text = _normalize_text(_extract_html(data))
+        raw_text, meta_refresh_url = _extract_html(data)
+        text = _normalize_text(raw_text)
         return ExtractResult(
             extractor="html_parser",
             is_scanned=False,
             text=text,
-            metrics={"chars": len(text)},
+            metrics={"chars": len(text), "meta_refresh_url": meta_refresh_url},
         )
 
     if ct.startswith("text/") or name.endswith((".txt", ".md")):
@@ -145,4 +279,3 @@ def extract_text(
         text="",
         metrics={"content_type": content_type or None, "filename": filename or None},
     )
-

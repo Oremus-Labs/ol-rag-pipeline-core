@@ -72,23 +72,43 @@ class LlmServiceClient:
         Calls `ol-llm-service` OpenAI-compatible `/v1/chat/completions`.
         """
 
-        body = {
-            "model": engine.openai_model,
-            "messages": [
+        return self.chat_completion(
+            model=engine.openai_model,
+            messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image_url", "image_url": {"url": _image_data_url(page.png_bytes)}},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": _image_data_url(page.png_bytes)},
+                        },
                         {"type": "text", "text": prompt},
                     ],
                 }
             ],
-            "max_tokens": max_tokens,
-        }
+            max_tokens=max_tokens,
+        )
 
+    def chat_completion(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+    ) -> str:
+        """
+        Calls `ol-llm-service` OpenAI-compatible `/v1/chat/completions` and returns the first
+        message content.
+        """
+        body = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
         url = self.base_url.rstrip("/") + "/v1/chat/completions"
         with httpx.Client(timeout=self.timeout_s) as client:
             r = client.post(url, headers=self._headers(), json=body)
             r.raise_for_status()
             return _extract_message_content(r.json())
-

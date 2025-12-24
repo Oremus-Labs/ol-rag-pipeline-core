@@ -92,6 +92,31 @@ class QdrantClient:
             )
             resp.raise_for_status()
 
+    def set_payload(
+        self,
+        *,
+        collection: str,
+        point_ids: list[str],
+        payload: dict[str, Any],
+    ) -> None:
+        """
+        Updates payload for existing points without re-uploading vectors.
+
+        Qdrant merges payload keys; values for provided keys are replaced.
+        """
+        if not point_ids:
+            return
+        base = self.base_url.rstrip("/")
+        headers = self._headers()
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(
+                f"{base}/collections/{collection}/points/payload",
+                params={"wait": "true"},
+                headers=headers,
+                json={"points": point_ids, "payload": payload},
+            )
+            resp.raise_for_status()
+
     def search(
         self,
         *,
