@@ -163,7 +163,7 @@ class ChunkEnrichmentRepository:
         where
           c.pipeline_version = %s
           and d.status = 'indexed_ok'
-          and (%s is null or d.source = %s)
+          and (%s::text is null or d.source = %s::text)
           and (
             e.chunk_id is null
             or e.chunk_sha256 is distinct from c.sha256
