@@ -199,7 +199,11 @@ def _iter_epub_paragraphs(text: str) -> Iterable[str]:
 
     # If there are blank lines, treat them as paragraph separators (normal case).
     if any(not l.strip() for l in lines):
-        yield from _iter_paragraphs(text)
+        for p in _iter_paragraphs(text):
+            if len(p) > 800:
+                yield from split_long_line(p)
+            else:
+                yield p
         return
 
     if not nonempty:
