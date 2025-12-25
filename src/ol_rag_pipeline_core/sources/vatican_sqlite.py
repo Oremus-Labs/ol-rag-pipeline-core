@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,34 @@ def _safe_json_loads(value: str | None) -> object | None:
         return None
 
 
-def discover_document_rows(sqlite_path: str, *, limit: int = 100) -> list[VaticanSqliteDocumentRow]:
+def _normalize_hosts(hosts: list[str] | None) -> list[str] | None:
+    if not hosts:
+        return None
+    out: list[str] = []
+    for h in hosts:
+        h = (h or "").strip().lower()
+        if not h:
+            continue
+        out.append(h)
+    return out or None
+
+
+def _url_host(url: str) -> str | None:
+    url = (url or "").strip()
+    if not url:
+        return None
+    parsed = urlparse(url if "://" in url else f"https://{url.lstrip('/')}")
+    host = (parsed.netloc or "").strip().lower()
+    return host or None
+
+
+def discover_document_rows(
+    sqlite_path: str,
+    *,
+    limit: int = 100,
+    hosts: list[str] | None = None,
+    sample_per_host: int | None = None,
+) -> list[VaticanSqliteDocumentRow]:
     """
     Vatican sqlite adapter.
 
@@ -62,6 +90,10 @@ def discover_document_rows(sqlite_path: str, *, limit: int = 100) -> list[Vatica
 
     If the schema differs, fall back to a best-effort scan for a URL-like column.
     """
+    normalized_hosts = _normalize_hosts(hosts)
+    effective_sample_per_host = (
+        int(sample_per_host) if sample_per_host is not None and int(sample_per_host) > 0 else None
+    )
     with sqlite3.connect(sqlite_path) as conn:
         tables = _list_tables(conn)
 
@@ -85,14 +117,22 @@ def discover_document_rows(sqlite_path: str, *, limit: int = 100) -> list[Vatica
                 ]
                 # Keep only columns that exist to avoid breaking if generator changes.
                 select_cols = [c for c in select_cols if c in cols]
-                sql = f"select {', '.join(select_cols)} from documents where link is not null limit ?"
-                rows = conn.execute(sql, (limit,)).fetchall()
+                sql = f"select {', '.join(select_cols)} from documents where link is not null"
+                if not normalized_hosts:
+                    sql += " limit ?"
+                    rows = conn.execute(sql, (limit,)).fetchall()
+                else:
+                    rows = conn.execute(sql).fetchall()
                 out: list[VaticanSqliteDocumentRow] = []
                 for r in rows:
                     data = dict(zip(select_cols, r, strict=True))
                     url = data.get("link")
                     if not url:
                         continue
+                    if normalized_hosts:
+                        host = _url_host(str(url))
+                        if not host or host not in normalized_hosts:
+                            continue
                     categories = _safe_json_loads(data.get("categories_json"))
                     raw = _safe_json_loads(data.get("raw_json"))
                     if isinstance(categories, list):
@@ -113,7 +153,21 @@ def discover_document_rows(sqlite_path: str, *, limit: int = 100) -> list[Vatica
                             raw_json=raw if isinstance(raw, dict) else None,
                         )
                     )
-                return out
+                if not normalized_hosts:
+                    return out[:limit]
+                if not effective_sample_per_host:
+                    return out[:limit]
+                by_host: dict[str, list[VaticanSqliteDocumentRow]] = {h: [] for h in normalized_hosts}
+                for row in out:
+                    host = _url_host(row.url)
+                    if not host:
+                        continue
+                    if host in by_host:
+                        by_host[host].append(row)
+                sampled: list[VaticanSqliteDocumentRow] = []
+                for h in normalized_hosts:
+                    sampled.extend(by_host.get(h, [])[:effective_sample_per_host])
+                return sampled[:limit]
 
         # Fallback: find the first table containing a URL-like column and return up to `limit` rows.
         for table in tables:
@@ -129,9 +183,13 @@ def discover_document_rows(sqlite_path: str, *, limit: int = 100) -> list[Vatica
             for rid, url in rows:
                 if not url:
                     continue
+                if normalized_hosts:
+                    host = _url_host(str(url))
+                    if not host or host not in normalized_hosts:
+                        continue
                 out.append(VaticanSqliteDocumentRow(row_id=str(rid), url=str(url)))
             if out:
-                return out
+                return out[:limit]
 
     return []
 

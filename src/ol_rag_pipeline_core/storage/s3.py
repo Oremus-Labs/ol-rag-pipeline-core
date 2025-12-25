@@ -72,3 +72,12 @@ class S3Client:
             extra["ContentType"] = content_type
         self._client.put_object(Bucket=self._cfg.bucket, Key=key, Body=data, **extra)
         return f"s3://{self._cfg.bucket}/{key}"
+
+    def delete_key(self, key: str) -> None:
+        self._client.delete_object(Bucket=self._cfg.bucket, Key=key)
+
+    def delete_uri(self, uri: str) -> None:
+        bucket, key = parse_s3_uri(uri)
+        if bucket != self._cfg.bucket:
+            raise ValueError(f"Bucket mismatch for URI: {uri}")
+        self.delete_key(key)
