@@ -32,6 +32,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+ol_rag_pipeline_core = ["migrations/sql/*.sql"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
