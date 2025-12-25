@@ -172,6 +172,22 @@ def test_chunk_enrichments_upsert_and_candidates(conn) -> None:  # noqa: ANN001
     )
     assert [c.chunk_id for c in candidates] == ["doc-4:v1:0"]
 
+    # Accepted-but-not-applied rows are also candidates (common when a dry-run stored output_json but
+    # did not apply Qdrant payload updates).
+    enrich.upsert(
+        chunk_id="doc-4:v1:0",
+        enrichment_version="gpt20b_v1",
+        model="gpt-20b",
+        chunk_sha256="sha-a",
+        input_sha256="input-a2",
+        confidence=0.99,
+        accepted=True,
+        output_json={"confidence": 0.99, "summary": "ok", "keywords": [], "topics": [], "entities": {}},
+        applied_at=None,
+    )
+    candidates = enrich.list_candidates(pipeline_version="v1", enrichment_version="gpt20b_v1", limit=10)
+    assert [c.chunk_id for c in candidates] == ["doc-4:v1:0"]
+
     # If the chunk changes, it should be selected even without include_rejected.
     chunks.replace_chunks(
         document_id="doc-4",

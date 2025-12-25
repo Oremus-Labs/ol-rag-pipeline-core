@@ -32,6 +32,11 @@ class ChunkEnrichmentCandidate:
     chunk_index: int
     chunk_sha256: str | None
     text_uri: str | None
+    existing_confidence: float | None
+    existing_accepted: bool | None
+    existing_applied_at: datetime | None
+    existing_output_json: dict[str, Any] | None
+    existing_error: str | None
 
 
 class ChunkEnrichmentRepository:
@@ -155,7 +160,10 @@ class ChunkEnrichmentRepository:
           c.sha256,
           c.text_uri,
           e.accepted,
-          e.chunk_sha256
+          e.applied_at,
+          e.output_json,
+          e.confidence,
+          e.error
         from chunks c
         join documents d on d.document_id = c.document_id
         left join chunk_enrichments e
@@ -167,6 +175,7 @@ class ChunkEnrichmentRepository:
           and (
             e.chunk_id is null
             or e.chunk_sha256 is distinct from c.sha256
+            or (e.accepted is true and e.applied_at is null)
             or (e.accepted is false and %s is true)
           )
         order by c.document_id, c.chunk_index
@@ -191,6 +200,11 @@ class ChunkEnrichmentRepository:
                 chunk_index=r[3],
                 chunk_sha256=r[4],
                 text_uri=r[5],
+                existing_accepted=r[6],
+                existing_applied_at=r[7],
+                existing_output_json=r[8],
+                existing_confidence=r[9],
+                existing_error=r[10],
             )
             for r in rows
         ]
