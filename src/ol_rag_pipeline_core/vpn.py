@@ -105,18 +105,34 @@ class VpnRotationGuard:
         We intentionally use an external probe URL (default: ipinfo.io) as a fallback because
         Gluetun's `/v1/publicip/ip` can be empty depending on DNS mode and internal settings.
         """
-        try:
-            r = httpx.get(
-                "https://ipinfo.io/ip",
-                timeout=3.0,
-                follow_redirects=True,
-            )
-            if r.status_code >= 400:
-                return False
-            ip = (r.text or "").strip()
-            return bool(ip) and any(ch.isdigit() for ch in ip)
-        except Exception:  # noqa: BLE001
-            return False
+        probe_urls = [
+            # Common plain-text IP endpoints.
+            "https://ipinfo.io/ip",
+            "https://api.ipify.org",
+            "https://ifconfig.co/ip",
+            "https://icanhazip.com",
+            # Cloudflare trace: includes a line like `ip=1.2.3.4`
+            "https://cloudflare.com/cdn-cgi/trace",
+        ]
+        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+            for url in probe_urls:
+                try:
+                    r = client.get(url)
+                    if r.status_code >= 400:
+                        continue
+                    text = (r.text or "").strip()
+                    if not text:
+                        continue
+                    if "cdn-cgi/trace" in url:
+                        for line in text.splitlines():
+                            if line.startswith("ip="):
+                                ip = line.split("=", 1)[1].strip()
+                                return bool(ip) and any(ch.isdigit() for ch in ip)
+                        continue
+                    return any(ch.isdigit() for ch in text)
+                except Exception:  # noqa: BLE001
+                    continue
+        return False
 
     def ensure_vpn_running(self) -> None:
         deadline = time.monotonic() + self.ensure_timeout_s
@@ -139,10 +155,21 @@ class VpnRotationGuard:
                 # verifying real external connectivity.
                 if last_ip or self._probe_external_connectivity():
                     return
-            try:
-                self.gluetun.set_openvpn_status("running")
-            except Exception:
-                pass
+                # Gluetun can report status="running" while the tunnel isn't fully usable;
+                # force a reconnect in that case.
+                try:
+                    self.gluetun.set_openvpn_status("stopped")
+                except Exception:
+                    pass
+                try:
+                    self.gluetun.set_openvpn_status("running")
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.gluetun.set_openvpn_status("running")
+                except Exception:
+                    pass
             time.sleep(self.ensure_poll_s)
 
         raise VpnError(
