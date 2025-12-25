@@ -165,20 +165,11 @@ def _iter_epub_paragraphs(text: str) -> Iterable[str]:
     lines = text.splitlines()
     nonempty = [l.strip() for l in lines if l.strip()]
 
-    # If there are blank lines, treat them as paragraph separators (normal case).
-    if any(not l.strip() for l in lines):
-        yield from _iter_paragraphs(text)
-        return
-
-    # Some extractors collapse the whole document into a single very long line.
-    # In that case, create readable paragraphs by splitting on sentence boundaries
-    # and then packing sentences into ~800-char paragraphs.
-    if len(nonempty) == 1 and len(nonempty[0]) > 1200:
-        one = nonempty[0]
-        sents = [s.strip() for s in _SENTENCE_BOUNDARY_RE.split(one) if s.strip()]
+    def split_long_line(line: str) -> Iterable[str]:
+        sents = [s.strip() for s in _SENTENCE_BOUNDARY_RE.split(line) if s.strip()]
         if len(sents) <= 1:
             # Fallback: split by whitespace into fixed-size chunks.
-            words = one.split()
+            words = line.split()
             buf: list[str] = []
             size = 0
             for w in words:
@@ -205,18 +196,30 @@ def _iter_epub_paragraphs(text: str) -> Iterable[str]:
                 buf = f"{buf} {s}"
         if buf:
             yield buf.strip()
+
+    # If there are blank lines, treat them as paragraph separators (normal case).
+    if any(not l.strip() for l in lines):
+        yield from _iter_paragraphs(text)
         return
 
-    # Many HTML extractors produce "one line per sentence/heading" without blank lines.
-    # In that case, emitting each line as its own paragraph is far more readable than
-    # concatenating the entire document into a single <p>.
-    if len(nonempty) >= 20:
-        for l in nonempty:
+    if not nonempty:
+        return
+
+    # When extractors omit blank lines, _iter_paragraphs() collapses everything into one <p>.
+    # Prefer one paragraph per non-empty line, and further split any long lines to keep EPUB readable.
+    if len(nonempty) == 1:
+        one = nonempty[0]
+        if len(one) > 800:
+            yield from split_long_line(one)
+        else:
+            yield one
+        return
+
+    for l in nonempty:
+        if len(l) > 800:
+            yield from split_long_line(l)
+        else:
             yield l
-        return
-
-    # Fallback: join everything into paragraphs using the existing blank-line algorithm.
-    yield from _iter_paragraphs(text)
 
 
 def build_epub_bytes(*, title: str, authors: list[str], language: str | None, body_text: str) -> bytes:
