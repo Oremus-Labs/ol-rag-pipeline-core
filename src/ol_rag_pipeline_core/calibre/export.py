@@ -170,14 +170,12 @@ def _iter_epub_paragraphs(text: str) -> Iterable[str]:
         return
 
     # Many HTML extractors produce "one line per sentence/heading" without blank lines.
-    # In that case, emitting each line as its own paragraph is typically more readable
-    # than concatenating the entire document into a single <p>.
-    if nonempty:
-        short = sum(1 for l in nonempty if len(l) <= 120)
-        if len(nonempty) >= 20 and (short / len(nonempty)) >= 0.6:
-            for l in nonempty:
-                yield l
-            return
+    # In that case, emitting each line as its own paragraph is far more readable than
+    # concatenating the entire document into a single <p>.
+    if len(nonempty) >= 20:
+        for l in nonempty:
+            yield l
+        return
 
     # Fallback: join everything into paragraphs using the existing blank-line algorithm.
     yield from _iter_paragraphs(text)
