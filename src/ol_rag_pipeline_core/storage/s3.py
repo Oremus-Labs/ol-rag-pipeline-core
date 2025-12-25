@@ -110,11 +110,10 @@ class S3Client:
             return 0
 
         deleted = 0
-        for i in range(0, len(keys), 1000):
-            chunk = keys[i : i + 1000]
-            self._client.delete_objects(
-                Bucket=self._cfg.bucket,
-                Delete={"Objects": [{"Key": k} for k in chunk], "Quiet": True},
-            )
-            deleted += len(chunk)
+        # Prefer per-object deletes for broad compatibility with S3 gateways.
+        # Some S3-compatible deployments (seen with MinIO behind certain proxies)
+        # can reject `DeleteObjects` without an explicit Content-MD5 header.
+        for k in keys:
+            self.delete_key(k)
+            deleted += 1
         return deleted
