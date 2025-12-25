@@ -65,6 +65,42 @@ def test_extract_text_strips_vatican_language_nav_block() -> None:
     assert "Vatican News" not in res.text
 
 
+def test_extract_text_strips_pdf_generation_boilerplate_without_nav_mode() -> None:
+    html = b"""
+    <html>
+      <body>
+        <div>24 ottobre 1990</div>
+        <div>Generazione pdf in corso.....</div>
+        <h1>GIOVANNI PAOLO II</h1>
+        <p>1. Nel suo intervento nella sinagoga di Nazaret.</p>
+      </body>
+    </html>
+    """
+    res = extract_text(data=html, content_type="text/html", filename="x.html")
+    assert "Generazione pdf in corso" not in res.text
+    assert "GIOVANNI PAOLO II" in res.text
+    assert "Nel suo intervento" in res.text
+
+
+def test_extract_text_strips_pdf_generation_and_lang_bullets() -> None:
+    html = b"""
+    <html>
+      <body>
+        <h1>POPE FRANCIS</h1>
+        <div>PDF generation in progress.....</div>
+        <div>&nbsp;-&nbsp; HR</div>
+        <div>&nbsp;-&nbsp; PL</div>
+        <p>Dear brothers and sisters, good morning!</p>
+      </body>
+    </html>
+    """
+    res = extract_text(data=html, content_type="text/html", filename="x.html")
+    assert "PDF generation in progress" not in res.text
+    assert "- HR" not in res.text
+    assert "- PL" not in res.text
+    assert "Dear brothers and sisters" in res.text
+
+
 def test_unknown_binary_routes_to_scanned() -> None:
     res = extract_text(
         data=b"\x00\x01\x02",

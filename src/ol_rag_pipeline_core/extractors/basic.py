@@ -133,6 +133,7 @@ _NL_RE = re.compile(r"\n{3,}")
 _LEADING_A_RE = re.compile(r"^(?:A\\s+){1,}A$|^A$")
 _LANG_LINE_RE = re.compile(r"^(?:[A-Z]{2}\\s*(?:-|–|—)\\s*){1,10}[A-Z]{2}$")
 _LANG_CODE_RE = re.compile(r"^[A-Z]{2}$")
+_BULLET_LANG_CODE_RE = re.compile(r"^(?:[-–—•*])\s*([A-Z]{2})$")
 _COMMON_LANG_CODES = {"AR", "DE", "EN", "ES", "FR", "IT", "LA", "PT", "ZH"}
 _PUNCT_ONLY_RE = re.compile(r"[^A-Za-z0-9]+")
 _VATICAN_LANG_NAMES = {
@@ -161,6 +162,12 @@ _VATICAN_NAV_PHRASES = {
     "vatican news - radio vaticana",
     "l'osservatore romano",
     "generazione pdf in corso.....",
+    "pdf generation in progress.....",
+}
+
+_UNCONDITIONAL_LEADING_PHRASES = {
+    "generazione pdf in corso.....",
+    "pdf generation in progress.....",
 }
 
 
@@ -210,10 +217,15 @@ def _strip_leading_boilerplate_lines(text: str, *, max_scan_lines: int = 120) ->
                 continue
             if _LANG_CODE_RE.match(stripped) and stripped in _COMMON_LANG_CODES:
                 continue
+            m = _BULLET_LANG_CODE_RE.match(stripped)
+            if m:
+                continue
+            low = stripped.lower().strip()
+            if low.startswith("× "):
+                low = low.removeprefix("× ").strip()
+            if low in _UNCONDITIONAL_LEADING_PHRASES:
+                continue
             if vatican_mode:
-                low = stripped.lower().strip()
-                if low.startswith("× "):
-                    low = low.removeprefix("× ").strip()
                 if low in _VATICAN_LANG_NAMES:
                     continue
                 if low in _VATICAN_NAV_PHRASES:
@@ -238,6 +250,7 @@ def _strip_leading_boilerplate_lines(text: str, *, max_scan_lines: int = 120) ->
 def _normalize_text(text: str, *, max_chars: int = 2_000_000) -> str:
     text = text.replace("\x00", "")
     text = text.replace("\u200b", "")
+    text = text.replace("\u00a0", " ")
     text = _WS_RE.sub(" ", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _NL_RE.sub("\n\n", text)
