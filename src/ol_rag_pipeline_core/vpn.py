@@ -29,6 +29,7 @@ def is_probably_external_url(url: str) -> bool:
 class GluetunControl(Protocol):
     def openvpn_status(self) -> str: ...
     def set_openvpn_status(self, status: str) -> None: ...
+    def public_ip(self) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,19 @@ class GluetunHttpControlClient:
             r = client.put("/v1/openvpn/status", json={"status": desired})
             r.raise_for_status()
 
+    def public_ip(self) -> str | None:
+        with self._client() as client:
+            r = client.get("/v1/publicip/ip")
+            r.raise_for_status()
+            data = r.json()
+        if isinstance(data, str):
+            ip = data.strip()
+            return ip or None
+        if isinstance(data, dict):
+            ip = str(data.get("public_ip") or data.get("ip") or "").strip()
+            return ip or None
+        return None
+
 
 @dataclass
 class VpnRotationGuard:
@@ -87,6 +101,7 @@ class VpnRotationGuard:
     def ensure_vpn_running(self) -> None:
         deadline = time.monotonic() + self.ensure_timeout_s
         last_status: str | None = None
+        last_ip: str | None = None
         while time.monotonic() < deadline:
             try:
                 last_status = self.gluetun.openvpn_status()
@@ -96,14 +111,21 @@ class VpnRotationGuard:
                 continue
 
             if last_status == "running":
-                return
+                try:
+                    last_ip = self.gluetun.public_ip()
+                except Exception:
+                    last_ip = None
+                if last_ip:
+                    return
             try:
                 self.gluetun.set_openvpn_status("running")
             except Exception:
                 pass
             time.sleep(self.ensure_poll_s)
 
-        raise VpnError(f"VPN not running after {self.ensure_timeout_s}s (last_status={last_status!r})")
+        raise VpnError(
+            f"VPN not running after {self.ensure_timeout_s}s (last_status={last_status!r} public_ip={last_ip!r})"
+        )
 
     def rotate_vpn(self) -> None:
         # Force a new server selection by cycling OpenVPN.
@@ -131,4 +153,3 @@ class VpnRotationGuard:
             self.rotate_vpn()
             return True
         return False
-
