@@ -19,17 +19,23 @@ def _choose_consensus(candidates: dict[str, str]) -> tuple[str, dict[str, Any]]:
     We prefer the output that is most similar to the other outputs (medoid).
     Ties break by longer text length (more content).
     """
-    engines = list(candidates.keys())
+    min_chars = 20
+    filtered = {e: t for e, t in candidates.items() if isinstance(t, str) and len(t.strip()) >= min_chars}
+    if not filtered:
+        # Fall back to any non-empty output; if everything is empty, keep original candidates.
+        filtered = {e: t for e, t in candidates.items() if isinstance(t, str) and t.strip()} or candidates
+
+    engines = list(filtered.keys())
     if not engines:
         raise ValueError("No OCR candidates provided")
     if len(engines) == 1:
         e = engines[0]
-        return candidates[e], {"winner": e, "pairwise_similarity": {}}
+        return filtered[e], {"winner": e, "pairwise_similarity": {}, "filtered_engines": engines}
 
     pairwise: dict[str, dict[str, float]] = {e: {} for e in engines}
     for i, a in enumerate(engines):
         for b in engines[i + 1 :]:
-            s = _similarity(candidates[a], candidates[b])
+            s = _similarity(filtered[a], filtered[b])
             pairwise[a][b] = s
             pairwise[b][a] = s
 
@@ -37,14 +43,15 @@ def _choose_consensus(candidates: dict[str, str]) -> tuple[str, dict[str, Any]]:
     for e in engines:
         sims = list(pairwise[e].values())
         avg = sum(sims) / max(len(sims), 1)
-        scored.append((avg, len(candidates[e]), e))
+        scored.append((avg, len(filtered[e]), e))
 
     scored.sort(reverse=True)
     best = scored[0][2]
-    return candidates[best], {
+    return filtered[best], {
         "winner": best,
         "avg_similarity": scored[0][0],
         "pairwise_similarity": pairwise,
+        "filtered_engines": engines,
     }
 
 
@@ -53,6 +60,7 @@ class OcrPageResult:
     page_number: int
     consensus_text: str
     engine_texts: dict[str, str]
+    errors_by_engine: dict[str, str]
     quality_by_engine: dict[str, dict[str, float]]
     consensus_meta: dict[str, Any]
     passed_gate: bool
@@ -87,15 +95,22 @@ def run_ocr_ensemble(
 
     for page in pages:
         engine_texts: dict[str, str] = {}
+        errors_by_engine: dict[str, str] = {}
         quality_by_engine: dict[str, dict[str, float]] = {}
 
         for engine in cfg.engines:
-            text = client.ocr_page(
-                engine=engine,
-                page=page,
-                prompt=cfg.prompt,
-                max_tokens=cfg.max_tokens,
-            )
+            try:
+                text = client.ocr_page(
+                    engine=engine,
+                    page=page,
+                    prompt=cfg.prompt,
+                    max_tokens=cfg.max_tokens,
+                )
+            except Exception as e:  # noqa: BLE001
+                # Treat engine failures as empty output so the ensemble can still choose
+                # a consensus from other engines and route low-quality pages to review.
+                errors_by_engine[engine.engine] = str(e)[:800]
+                text = ""
             engine_texts[engine.engine] = text
             q = assess_ocr_text_quality(text)
             quality_by_engine[engine.engine] = {
@@ -115,6 +130,7 @@ def run_ocr_ensemble(
                 page_number=page.page_number,
                 consensus_text=consensus_text,
                 engine_texts=engine_texts,
+                errors_by_engine=errors_by_engine,
                 quality_by_engine=quality_by_engine,
                 consensus_meta=consensus_meta,
                 passed_gate=passed,
@@ -128,4 +144,3 @@ def run_ocr_ensemble(
     merged = "".join(merged_lines).strip() + "\n"
 
     return OcrEnsembleResult(pages=results, merged_text=merged, overall_passed=overall_ok)
-

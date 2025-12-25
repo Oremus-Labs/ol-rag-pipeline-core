@@ -42,11 +42,15 @@ def _extract_message_content(payload: dict[str, Any]) -> str:
     content = msg.get("content")
     if isinstance(content, str) and content.strip():
         return content.strip()
+    if isinstance(content, str):
+        # Allow empty content (some OCR engines occasionally return empty text for blank pages).
+        # The caller should treat this as low-quality output and route to review/quality gates.
+        return ""
     # Some backends can return `text` at the top-level choice; accept as fallback.
     text = first.get("text")
     if isinstance(text, str) and text.strip():
         return text.strip()
-    raise RuntimeError("OpenAI response had empty message content")
+    return ""
 
 
 @dataclass(frozen=True)
