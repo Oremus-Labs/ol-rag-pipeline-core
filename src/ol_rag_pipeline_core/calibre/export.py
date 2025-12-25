@@ -15,6 +15,7 @@ from ol_rag_pipeline_core.storage.s3 import S3Client
 
 
 _WHITESPACE_RE = re.compile(r"[ \t]+")
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+(?=[^\s])", flags=re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,43 @@ def _iter_epub_paragraphs(text: str) -> Iterable[str]:
     # If there are blank lines, treat them as paragraph separators (normal case).
     if any(not l.strip() for l in lines):
         yield from _iter_paragraphs(text)
+        return
+
+    # Some extractors collapse the whole document into a single very long line.
+    # In that case, create readable paragraphs by splitting on sentence boundaries
+    # and then packing sentences into ~800-char paragraphs.
+    if len(nonempty) == 1 and len(nonempty[0]) > 1200:
+        one = nonempty[0]
+        sents = [s.strip() for s in _SENTENCE_BOUNDARY_RE.split(one) if s.strip()]
+        if len(sents) <= 1:
+            # Fallback: split by whitespace into fixed-size chunks.
+            words = one.split()
+            buf: list[str] = []
+            size = 0
+            for w in words:
+                if size + len(w) + 1 > 800 and buf:
+                    yield " ".join(buf).strip()
+                    buf = [w]
+                    size = len(w) + 1
+                else:
+                    buf.append(w)
+                    size += len(w) + 1
+            if buf:
+                yield " ".join(buf).strip()
+            return
+
+        buf = ""
+        for s in sents:
+            if not buf:
+                buf = s
+                continue
+            if len(buf) + 1 + len(s) > 800:
+                yield buf.strip()
+                buf = s
+            else:
+                buf = f"{buf} {s}"
+        if buf:
+            yield buf.strip()
         return
 
     # Many HTML extractors produce "one line per sentence/heading" without blank lines.
