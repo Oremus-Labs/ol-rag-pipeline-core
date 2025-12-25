@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape as html_escape
 from io import BytesIO
+import json
 from typing import Iterable
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -94,7 +95,12 @@ def build_markdown(*, meta: dict[str, str | int | None], body_text: str) -> str:
     for k, v in meta.items():
         if v is None or v == "":
             continue
-        front.append(f"{k}: {v}")
+        if isinstance(v, int):
+            front.append(f"{k}: {v}")
+        else:
+            # YAML accepts JSON-style quoted strings; this avoids breaking front matter
+            # for URLs, colons, quotes, etc.
+            front.append(f"{k}: {json.dumps(str(v), ensure_ascii=False)}")
     front.append("---\n")
     title = str(meta.get("title") or "").strip()
     md = "\n".join(front)
@@ -153,10 +159,34 @@ def build_calibre_opf(
     return xml.encode("utf-8")
 
 
-def build_epub_bytes(*, title: str, authors: list[str], language: str | None, body_markdown: str) -> bytes:
+def _iter_epub_paragraphs(text: str) -> Iterable[str]:
+    text = _normalize_text(text)
+    lines = text.splitlines()
+    nonempty = [l.strip() for l in lines if l.strip()]
+
+    # If there are blank lines, treat them as paragraph separators (normal case).
+    if any(not l.strip() for l in lines):
+        yield from _iter_paragraphs(text)
+        return
+
+    # Many HTML extractors produce "one line per sentence/heading" without blank lines.
+    # In that case, emitting each line as its own paragraph is typically more readable
+    # than concatenating the entire document into a single <p>.
+    if nonempty:
+        short = sum(1 for l in nonempty if len(l) <= 120)
+        if len(nonempty) >= 20 and (short / len(nonempty)) >= 0.6:
+            for l in nonempty:
+                yield l
+            return
+
+    # Fallback: join everything into paragraphs using the existing blank-line algorithm.
+    yield from _iter_paragraphs(text)
+
+
+def build_epub_bytes(*, title: str, authors: list[str], language: str | None, body_text: str) -> bytes:
     # Very small EPUB3 generator (no external deps). Calibre-Web accepts this and renders it.
-    # We store the markdown-derived text as simple paragraphs to keep it readable.
-    text_paragraphs = "\n".join([f"<p>{html_escape(p)}</p>" for p in _iter_paragraphs(body_markdown)])
+    # Render plain extracted text as paragraphs for maximal robustness.
+    text_paragraphs = "\n".join([f"<p>{html_escape(p)}</p>" for p in _iter_epub_paragraphs(body_text)])
 
     content_xhtml = f"""<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
@@ -271,7 +301,7 @@ class CalibreExporter:
             "pipeline_version": inp.pipeline_version,
         }
         md = build_markdown(meta=meta, body_text=inp.extracted_text)
-        epub = build_epub_bytes(title=title, authors=authors, language=doc.language, body_markdown=md)
+        epub = build_epub_bytes(title=title, authors=authors, language=doc.language, body_text=inp.extracted_text)
         opf = build_calibre_opf(
             title=title,
             authors=authors,

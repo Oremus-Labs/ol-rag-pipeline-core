@@ -38,10 +38,9 @@ def test_build_calibre_opf_contains_core_fields() -> None:
 
 
 def test_build_epub_is_valid_zip_with_mimetype_first() -> None:
-    epub = build_epub_bytes(title="T", authors=["A"], language="en", body_markdown="Hello\n\nWorld")
+    epub = build_epub_bytes(title="T", authors=["A"], language="en", body_text="Hello\n\nWorld")
     z = zipfile.ZipFile(BytesIO(epub))
     names = z.namelist()
     assert names[0] == "mimetype"
     assert z.read("mimetype") == b"application/epub+zip"
     assert b"<html" in z.read("OEBPS/content.xhtml")
-
