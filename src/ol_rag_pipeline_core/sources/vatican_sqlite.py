@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import zlib
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -78,9 +79,11 @@ def _url_host(url: str) -> str | None:
 def discover_document_rows(
     sqlite_path: str,
     *,
-    limit: int = 100,
+    limit: int | None = 100,
     hosts: list[str] | None = None,
     sample_per_host: int | None = None,
+    partition_index: int | None = None,
+    num_partitions: int | None = None,
 ) -> list[VaticanSqliteDocumentRow]:
     """
     Vatican sqlite adapter.
@@ -90,10 +93,32 @@ def discover_document_rows(
 
     If the schema differs, fall back to a best-effort scan for a URL-like column.
     """
+    effective_limit = None if limit is None or int(limit) <= 0 else int(limit)
     normalized_hosts = _normalize_hosts(hosts)
     effective_sample_per_host = (
         int(sample_per_host) if sample_per_host is not None and int(sample_per_host) > 0 else None
     )
+    if (partition_index is None) != (num_partitions is None):
+        raise ValueError("partition_index and num_partitions must be set together (or both unset)")
+    if num_partitions is not None:
+        num_partitions = int(num_partitions)
+        partition_index = int(partition_index or 0)
+        if num_partitions <= 0:
+            raise ValueError("num_partitions must be > 0")
+        if partition_index < 0 or partition_index >= num_partitions:
+            raise ValueError("partition_index must be within [0, num_partitions)")
+
+    def _partition_for_row(row: VaticanSqliteDocumentRow) -> int:
+        if num_partitions is None:
+            return 0
+        try:
+            rid = int(row.row_id)
+            if rid >= 0:
+                return rid % num_partitions
+        except (TypeError, ValueError):
+            pass
+        return (zlib.crc32(row.url.encode("utf-8")) & 0xFFFFFFFF) % num_partitions
+
     with sqlite3.connect(sqlite_path) as conn:
         tables = _list_tables(conn)
 
@@ -118,11 +143,7 @@ def discover_document_rows(
                 # Keep only columns that exist to avoid breaking if generator changes.
                 select_cols = [c for c in select_cols if c in cols]
                 sql = f"select {', '.join(select_cols)} from documents where link is not null"
-                if not normalized_hosts:
-                    sql += " limit ?"
-                    rows = conn.execute(sql, (limit,)).fetchall()
-                else:
-                    rows = conn.execute(sql).fetchall()
+                rows = conn.execute(sql).fetchall()
                 out: list[VaticanSqliteDocumentRow] = []
                 for r in rows:
                     data = dict(zip(select_cols, r, strict=True))
@@ -153,10 +174,12 @@ def discover_document_rows(
                             raw_json=raw if isinstance(raw, dict) else None,
                         )
                     )
+                if num_partitions is not None:
+                    out = [row for row in out if _partition_for_row(row) == partition_index]
                 if not normalized_hosts:
-                    return out[:limit]
+                    return out[:effective_limit] if effective_limit is not None else out
                 if not effective_sample_per_host:
-                    return out[:limit]
+                    return out[:effective_limit] if effective_limit is not None else out
                 by_host: dict[str, list[VaticanSqliteDocumentRow]] = {h: [] for h in normalized_hosts}
                 for row in out:
                     host = _url_host(row.url)
@@ -167,7 +190,9 @@ def discover_document_rows(
                 sampled: list[VaticanSqliteDocumentRow] = []
                 for h in normalized_hosts:
                     sampled.extend(by_host.get(h, [])[:effective_sample_per_host])
-                return sampled[:limit]
+                if num_partitions is not None:
+                    sampled = [row for row in sampled if _partition_for_row(row) == partition_index]
+                return sampled[:effective_limit] if effective_limit is not None else sampled
 
         # Fallback: find the first table containing a URL-like column and return up to `limit` rows.
         for table in tables:
@@ -177,8 +202,8 @@ def discover_document_rows(
                 continue
             url_col = url_cols[0]
             id_col = cols[0]
-            sql = f"select {id_col}, {url_col} from {table} where {url_col} is not null limit ?"
-            rows = conn.execute(sql, (limit,)).fetchall()
+            sql = f"select {id_col}, {url_col} from {table} where {url_col} is not null"
+            rows = conn.execute(sql).fetchall()
             out: list[VaticanSqliteDocumentRow] = []
             for rid, url in rows:
                 if not url:
@@ -189,7 +214,9 @@ def discover_document_rows(
                         continue
                 out.append(VaticanSqliteDocumentRow(row_id=str(rid), url=str(url)))
             if out:
-                return out[:limit]
+                if num_partitions is not None:
+                    out = [row for row in out if _partition_for_row(row) == partition_index]
+                return out[:effective_limit] if effective_limit is not None else out
 
     return []
 
