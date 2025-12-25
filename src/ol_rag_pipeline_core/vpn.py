@@ -98,6 +98,26 @@ class VpnRotationGuard:
 
     _external_request_count: int = 0
 
+    def _probe_external_connectivity(self) -> bool:
+        """
+        Verify external connectivity through the pod's configured egress.
+
+        We intentionally use an external probe URL (default: ipinfo.io) as a fallback because
+        Gluetun's `/v1/publicip/ip` can be empty depending on DNS mode and internal settings.
+        """
+        try:
+            r = httpx.get(
+                "https://ipinfo.io/ip",
+                timeout=3.0,
+                follow_redirects=True,
+            )
+            if r.status_code >= 400:
+                return False
+            ip = (r.text or "").strip()
+            return bool(ip) and any(ch.isdigit() for ch in ip)
+        except Exception:  # noqa: BLE001
+            return False
+
     def ensure_vpn_running(self) -> None:
         deadline = time.monotonic() + self.ensure_timeout_s
         last_status: str | None = None
@@ -115,7 +135,9 @@ class VpnRotationGuard:
                     last_ip = self.gluetun.public_ip()
                 except Exception:
                     last_ip = None
-                if last_ip:
+                # Prefer Gluetun's reported public IP if available, otherwise fall back to
+                # verifying real external connectivity.
+                if last_ip or self._probe_external_connectivity():
                     return
             try:
                 self.gluetun.set_openvpn_status("running")
