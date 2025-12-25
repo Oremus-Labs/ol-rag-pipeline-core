@@ -84,3 +84,36 @@ class ReviewQueueRepository:
         )
         self._conn.commit()
         return review_id
+
+    def resolve_open_items(
+        self,
+        *,
+        document_id: str,
+        pipeline_version: str,
+        reason: str | None = None,
+    ) -> int:
+        """
+        Mark open review items as resolved.
+
+        Returns the number of rows updated.
+        """
+        if reason:
+            cur = self._conn.execute(
+                """
+                update review_queue
+                set status='resolved', resolved_at=now()
+                where document_id=%s and pipeline_version=%s and reason=%s and status='open'
+                """,
+                (document_id, pipeline_version, reason),
+            )
+        else:
+            cur = self._conn.execute(
+                """
+                update review_queue
+                set status='resolved', resolved_at=now()
+                where document_id=%s and pipeline_version=%s and status='open'
+                """,
+                (document_id, pipeline_version),
+            )
+        self._conn.commit()
+        return cur.rowcount or 0
