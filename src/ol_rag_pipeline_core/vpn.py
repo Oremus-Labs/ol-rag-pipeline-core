@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from typing import Protocol
+import os
 from urllib.parse import urlparse
 
 import httpx
@@ -89,7 +90,11 @@ class GluetunHttpControlClient:
 
 @dataclass
 class VpnRotationGuard:
-    gluetun: GluetunControl
+    gluetun: GluetunControl | None = None
+    # Optional proxy pool (comma-separated list via env in control plane).
+    # When set, we rotate external requests by switching the pod's HTTP(S) proxy env vars,
+    # rather than restarting OpenVPN (which would disrupt all workers sharing the same egress).
+    proxy_pool: list[str] | None = None
     rotate_every_n_requests: int = 10
     require_vpn_for_external: bool = True
     ensure_timeout_s: float = 90.0
@@ -97,6 +102,26 @@ class VpnRotationGuard:
     rotate_cooldown_s: float = 2.0
 
     _external_request_count: int = 0
+    _proxy_index: int = 0
+
+    def _apply_proxy_env(self, proxy_url: str | None) -> None:
+        if not proxy_url:
+            return
+        os.environ["HTTP_PROXY"] = proxy_url
+        os.environ["HTTPS_PROXY"] = proxy_url
+        os.environ["ALL_PROXY"] = proxy_url
+
+    def _current_proxy(self) -> str | None:
+        if self.proxy_pool:
+            return os.environ.get("HTTP_PROXY") or None
+        return None
+
+    def _rotate_proxy_once(self) -> str:
+        assert self.proxy_pool
+        self._proxy_index = (self._proxy_index + 1) % len(self.proxy_pool)
+        proxy = self.proxy_pool[self._proxy_index]
+        self._apply_proxy_env(proxy)
+        return proxy
 
     def _probe_external_connectivity(self) -> bool:
         """
@@ -139,7 +164,23 @@ class VpnRotationGuard:
         last_status: str | None = None
         last_ip: str | None = None
         while time.monotonic() < deadline:
+            # Proxy-pool mode: we only verify that the current proxy can reach the outside world.
+            # The proxy pods (Gluetun egress) manage their own OpenVPN state independently.
+            if self.proxy_pool:
+                if not self._current_proxy():
+                    self._apply_proxy_env(self.proxy_pool[0])
+                if self._probe_external_connectivity():
+                    return
+                try:
+                    self._rotate_proxy_once()
+                except Exception:
+                    pass
+                time.sleep(self.ensure_poll_s)
+                continue
+
             try:
+                if not self.gluetun:
+                    raise VpnError("VPN is required but no Gluetun control client is configured")
                 last_status = self.gluetun.openvpn_status()
             except Exception as e:  # noqa: BLE001
                 last_status = None
@@ -177,7 +218,23 @@ class VpnRotationGuard:
         )
 
     def rotate_vpn(self) -> None:
+        if self.proxy_pool:
+            if not self.proxy_pool:
+                raise VpnError("VPN proxy pool is empty")
+            # Try each proxy at most once during a rotation attempt.
+            for _ in range(len(self.proxy_pool)):
+                self._rotate_proxy_once()
+                try:
+                    self.ensure_vpn_running()
+                    time.sleep(self.rotate_cooldown_s)
+                    return
+                except Exception:
+                    continue
+            raise VpnError("All VPN proxies failed connectivity checks")
+
         # Force a new server selection by cycling OpenVPN.
+        if not self.gluetun:
+            raise VpnError("rotate_vpn requires a Gluetun control client or a proxy pool")
         self.gluetun.set_openvpn_status("stopped")
         # Some providers keep status="running" briefly; just wait until it isn't running anymore.
         deadline = time.monotonic() + self.ensure_timeout_s
