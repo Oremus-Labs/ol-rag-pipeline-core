@@ -100,9 +100,14 @@ class VpnRotationGuard:
     ensure_timeout_s: float = 90.0
     ensure_poll_s: float = 2.0
     rotate_cooldown_s: float = 2.0
+    # Cache successful health checks to avoid probing on every request.
+    # This is important for proxy-pool mode: if we probe an external IP endpoint per request,
+    # we double the number of outbound calls and slow the crawl dramatically.
+    status_cache_ttl_s: float = 30.0
 
     _external_request_count: int = 0
     _proxy_index: int = 0
+    _last_ok_monotonic: float = 0.0
 
     def _apply_proxy_env(self, proxy_url: str | None) -> None:
         if not proxy_url:
@@ -115,6 +120,11 @@ class VpnRotationGuard:
         if self.proxy_pool:
             return os.environ.get("HTTP_PROXY") or None
         return None
+
+    def _is_cache_fresh(self) -> bool:
+        if self.status_cache_ttl_s <= 0:
+            return False
+        return (time.monotonic() - self._last_ok_monotonic) < self.status_cache_ttl_s
 
     def _rotate_proxy_once(self) -> str:
         assert self.proxy_pool
@@ -160,6 +170,9 @@ class VpnRotationGuard:
         return False
 
     def ensure_vpn_running(self) -> None:
+        if self._is_cache_fresh():
+            return
+
         deadline = time.monotonic() + self.ensure_timeout_s
         last_status: str | None = None
         last_ip: str | None = None
@@ -169,7 +182,19 @@ class VpnRotationGuard:
             if self.proxy_pool:
                 if not self._current_proxy():
                     self._apply_proxy_env(self.proxy_pool[0])
+                # Prefer checking the egress OpenVPN state via the control API if provided.
+                # This avoids hitting an external IP endpoint for every request.
+                if self.gluetun:
+                    try:
+                        last_status = self.gluetun.openvpn_status()
+                    except Exception:
+                        last_status = None
+                    if last_status == "running":
+                        self._last_ok_monotonic = time.monotonic()
+                        return
+                # Fallback: probe externally (rate-limited by cache TTL).
                 if self._probe_external_connectivity():
+                    self._last_ok_monotonic = time.monotonic()
                     return
                 try:
                     self._rotate_proxy_once()
@@ -188,13 +213,18 @@ class VpnRotationGuard:
                 continue
 
             if last_status == "running":
+                # If Gluetun reports the tunnel as running, treat it as "good enough" and
+                # avoid expensive external probes on every request. Failures will be surfaced
+                # by the caller's actual HTTP request and can trigger rotations/retries.
                 try:
                     last_ip = self.gluetun.public_ip()
                 except Exception:
                     last_ip = None
-                # Prefer Gluetun's reported public IP if available, otherwise fall back to
-                # verifying real external connectivity.
-                if last_ip or self._probe_external_connectivity():
+                if last_ip:
+                    self._last_ok_monotonic = time.monotonic()
+                    return
+                if self._probe_external_connectivity():
+                    self._last_ok_monotonic = time.monotonic()
                     return
                 # Gluetun can report status="running" while the tunnel isn't fully usable;
                 # force a reconnect in that case.
@@ -221,6 +251,11 @@ class VpnRotationGuard:
         if self.proxy_pool:
             if not self.proxy_pool:
                 raise VpnError("VPN proxy pool is empty")
+            if len(self.proxy_pool) == 1:
+                # Nothing to rotate to; just make sure it's healthy.
+                self.ensure_vpn_running()
+                time.sleep(self.rotate_cooldown_s)
+                return
             # Try each proxy at most once during a rotation attempt.
             for _ in range(len(self.proxy_pool)):
                 self._rotate_proxy_once()
@@ -255,7 +290,10 @@ class VpnRotationGuard:
             self.ensure_vpn_running()
 
         self._external_request_count += 1
-        if self.rotate_every_n_requests > 0 and self._external_request_count % self.rotate_every_n_requests == 0:
+        rotate_every = self.rotate_every_n_requests
+        if self.proxy_pool and len(self.proxy_pool) <= 1:
+            rotate_every = 0
+        if rotate_every > 0 and self._external_request_count % rotate_every == 0:
             self.rotate_vpn()
             return True
         return False

@@ -17,6 +17,9 @@ class FakeGluetun:
         self.set_calls.append(status)
         self.status = status
 
+    def public_ip(self) -> str | None:
+        return "203.0.113.10" if self.status == "running" else None
+
 
 @pytest.mark.parametrize(
     ("url", "expected"),
@@ -44,4 +47,3 @@ def test_vpn_guard_rotates_every_n_requests() -> None:
 
     # rotate = stopped then running
     assert gluetun.set_calls == ["stopped", "running"]
-
